@@ -1,0 +1,46 @@
+name: Build and Release (macOS DMG)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: write  # needed to create releases and upload assets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build Electron app (DMGs)
+        working-directory: desktop
+        run: npm run build
+
+      - name: Upload build artifacts (for debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-flow-dist
+          path: |
+            desktop/dist/**/*.dmg
+            desktop/dist/**/*.blockmap
+
+      - name: Create Release and upload DMGs
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/**/*.dmg
+            desktop/dist/**/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
