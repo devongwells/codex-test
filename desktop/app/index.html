@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neon Flow — Interactive Canvas Demo</title>
+    <style>
+      :root {
+        --bg: #080810;
+        --panel: rgba(18, 18, 30, 0.7);
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --text: #e8ecf1;
+        --muted: #a8b0bb;
+        --accent: #66e1ff;
+        --accent-2: #ff6ad5;
+      }
+
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: radial-gradient(1200px 800px at 15% 10%, #0f1130 0%, #0a0b20 40%, #070816 100%), var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        overflow: hidden;
+      }
+
+      #c {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        display: block;
+        cursor: crosshair;
+        /* Subtle vignette */
+        box-shadow: inset 0 0 180px rgba(0,0,0,0.55);
+      }
+
+      .ui {
+        position: fixed;
+        top: 14px;
+        left: 14px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        backdrop-filter: blur(8px) saturate(120%);
+        -webkit-backdrop-filter: blur(8px) saturate(120%);
+        user-select: none;
+      }
+
+      .ui h1 {
+        margin: 0 8px 0 0;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        color: var(--text);
+      }
+
+      .btn {
+        appearance: none;
+        border: 1px solid var(--panel-border);
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 12px;
+        letter-spacing: 0.3px;
+        cursor: pointer;
+        transition: transform .08s ease, background .2s ease, border-color .2s ease;
+      }
+      .btn:hover { background: rgba(255,255,255,0.12); }
+      .btn:active { transform: translateY(1px) scale(0.98); }
+      .btn.primary { border-color: rgba(102,225,255,0.35); box-shadow: 0 0 0 2px rgba(102,225,255,0.08) inset; }
+
+      .slider {
+        display: flex; align-items: center; gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .slider input[type=range] {
+        width: 160px; height: 4px; border-radius: 999px; background: rgba(255,255,255,0.1);
+        outline: none; accent-color: #77ddff;
+      }
+
+      .badge {
+        position: fixed;
+        right: 14px;
+        top: 14px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .hint {
+        position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        color: var(--muted);
+        padding: 8px 12px; border-radius: 10px; font-size: 12px;
+      }
+      .k { color: #d0d7ff; }
+      .accent { color: var(--accent); }
+      .accent2 { color: var(--accent-2); }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div class="ui">
+      <h1>Neon Flow</h1>
+      <button class="btn" id="mode">Mode: Aurora</button>
+      <button class="btn" id="clear">Clear</button>
+      <button class="btn primary" id="save">Save PNG</button>
+      <div class="slider">
+        Density
+        <input id="density" type="range" min="200" max="3000" step="50" value="1200" />
+      </div>
+    </div>
+    <div class="badge" id="fps">FPS: —</div>
+    <div class="hint">
+      Move mouse to warp | Click to burst | <span class="k">Space</span> pause
+    </div>
+
+    <script>
+      const TAU = Math.PI * 2;
+      const rnd = (min, max) => min + Math.random() * (max - min);
+
+      const canvas = document.getElementById('c');
+      const ctx = canvas.getContext('2d', { alpha: true });
+      let w = 0, h = 0, dpr = Math.max(1, window.devicePixelRatio || 1);
+
+      let particles = [];
+      let desiredCount = 1200;
+      let t = 0, paused = false;
+      let mode = 0; // 0: Aurora, 1: Galaxy, 2: Firefly
+      const modes = ['Aurora', 'Galaxy', 'Firefly'];
+      const pointer = { x: 0, y: 0, down: false };
+
+      function resize() {
+        w = canvas.width = Math.floor(innerWidth * dpr);
+        h = canvas.height = Math.floor(innerHeight * dpr);
+        canvas.style.width = innerWidth + 'px';
+        canvas.style.height = innerHeight + 'px';
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.scale(dpr, dpr);
+        // add a soft clear to avoid harsh jumps on resize
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = 'rgba(5,6,12,1)';
+        ctx.fillRect(0,0,innerWidth,innerHeight);
+      }
+      addEventListener('resize', resize, { passive: true });
+      resize();
+
+      function spawnParticle() {
+        const angle = Math.random() * TAU;
+        const radius = Math.min(innerWidth, innerHeight) * 0.45 * Math.random();
+        const cx = innerWidth/2 + Math.cos(angle) * radius;
+        const cy = innerHeight/2 + Math.sin(angle) * radius;
+        return {
+          x: cx, y: cy,
+          px: cx, py: cy,
+          vx: rnd(-0.5, 0.5), vy: rnd(-0.5,0.5),
+          hue: rnd(180, 320),
+          life: rnd(0.5, 1.5),
+          size: rnd(0.6, 1.8)
+        };
+      }
+
+      function ensureCount() {
+        while (particles.length < desiredCount) particles.push(spawnParticle());
+        if (particles.length > desiredCount) particles.length = desiredCount;
+      }
+
+      // Flow field — fast, shader-like look via trig noise
+      function field(x, y, time) {
+        const s = 0.0024;
+        const nx = x * s, ny = y * s;
+        let a = Math.sin(ny + time * 0.6) + Math.cos(nx - time * 0.7);
+        if (mode === 1) a += Math.sin(nx*1.7 + ny*1.3 + time*0.8) * 0.8; // Galaxy
+        if (mode === 2) a += Math.sin((nx+ny)*2.2 - time*1.2) * 0.6;     // Firefly
+        return a * Math.PI; // angle in radians
+      }
+
+      function step(dt) {
+        ensureCount();
+        t += dt * 0.001;
+        const pw = innerWidth, ph = innerHeight;
+
+        // subtle trail via translucent fill
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = 'rgba(7, 8, 16, 0.08)';
+        ctx.fillRect(0, 0, pw, ph);
+
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        for (let i = 0; i < particles.length; i++) {
+          const p = particles[i];
+          p.px = p.x; p.py = p.y;
+
+          const ang = field(p.x, p.y, t);
+          let ax = Math.cos(ang), ay = Math.sin(ang);
+
+          // pointer gravity
+          if (pointer.x || pointer.y) {
+            const dx = pointer.x - p.x, dy = pointer.y - p.y;
+            const dist2 = Math.max(24, dx*dx + dy*dy);
+            const pull = pointer.down ? 120 : 35;
+            ax += dx / dist2 * pull;
+            ay += dy / dist2 * pull;
+          }
+
+          // integrate
+          p.vx += ax * 0.04; p.vy += ay * 0.04;
+          p.vx *= 0.965; p.vy *= 0.965; // damping
+          p.x += p.vx; p.y += p.vy;
+
+          // wrap
+          if (p.x < -5) p.x = pw + 5; else if (p.x > pw + 5) p.x = -5;
+          if (p.y < -5) p.y = ph + 5; else if (p.y > ph + 5) p.y = -5;
+
+          const spd = Math.hypot(p.vx, p.vy);
+          const hue = (p.hue + t*50 + spd * 120) % 360;
+          const alpha = Math.min(0.8, 0.15 + spd * 0.35);
+          ctx.strokeStyle = `hsla(${hue}, 90%, 60%, ${alpha})`;
+          ctx.lineWidth = Math.min(2.5, Math.max(0.6, p.size + spd * 0.6));
+
+          ctx.beginPath();
+          ctx.moveTo(p.px, p.py);
+          ctx.lineTo(p.x, p.y);
+          ctx.stroke();
+        }
+      }
+
+      // Animation loop with fps tracking
+      let last = performance.now();
+      let acc = 0, frames = 0, fps = 0; const fpsEl = document.getElementById('fps');
+      function loop(now) {
+        const dt = Math.min(32, now - last);
+        last = now;
+        if (!paused) step(dt);
+        acc += dt; frames++;
+        if (acc >= 500) { fps = Math.round(frames * 1000 / acc); acc = 0; frames = 0; fpsEl.textContent = `FPS: ${fps}`; }
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+
+      // Inputs
+      canvas.addEventListener('pointermove', (e) => {
+        pointer.x = e.clientX; pointer.y = e.clientY;
+      }, { passive: true });
+      canvas.addEventListener('pointerdown', (e) => {
+        pointer.down = true;
+        burst(e.clientX, e.clientY);
+      });
+      addEventListener('pointerup', () => pointer.down = false);
+
+      function burst(x, y) {
+        // inject an energetic ring
+        const count = 120;
+        for (let i = 0; i < count; i++) {
+          const a = i / count * TAU;
+          const p = spawnParticle();
+          p.x = x; p.y = y; p.px = x; p.py = y;
+          const speed = rnd(3, 6);
+          p.vx = Math.cos(a) * speed; p.vy = Math.sin(a) * speed;
+          p.hue = (i / count) * 360;
+          particles[Math.floor(Math.random() * particles.length)] = p;
+        }
+      }
+
+      // UI
+      document.getElementById('mode').addEventListener('click', (e) => {
+        mode = (mode + 1) % modes.length;
+        e.currentTarget.textContent = `Mode: ${modes[mode]}`;
+      });
+      document.getElementById('clear').addEventListener('click', () => {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = 'rgba(5,6,12,1)';
+        ctx.fillRect(0,0,innerWidth,innerHeight);
+      });
+      document.getElementById('save').addEventListener('click', () => savePNG());
+      document.getElementById('density').addEventListener('input', (e) => {
+        desiredCount = parseInt(e.target.value, 10) | 0;
+      });
+
+      // Keyboard
+      addEventListener('keydown', (e) => {
+        if (e.code === 'Space') { paused = !paused; }
+        if (e.key.toLowerCase() === 's') savePNG();
+      });
+
+      function savePNG() {
+        // Temporarily draw a clean composite to export at full res
+        const link = document.createElement('a');
+        link.download = `neon-flow-${Date.now()}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      }
+
+      // Start with a clean background
+      ctx.fillStyle = 'rgba(5,6,12,1)';
+      ctx.fillRect(0,0,innerWidth,innerHeight);
+    </script>
+  </body>
+  </html>
+
